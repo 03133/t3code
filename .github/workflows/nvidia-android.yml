@@ -1,0 +1,25 @@
+name: NVIDIA Android test build
+
+on:
+  push:
+    branches: [nvidia-android]
+    paths: [.github/workflows/nvidia-android.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  check-runner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check Android build environment
+        run: |
+          echo "Verifying Android build runner"
+          java -version
+          df -h .
+          free -h
+          echo "Android SDK: ${ANDROID_HOME:-not set}"
