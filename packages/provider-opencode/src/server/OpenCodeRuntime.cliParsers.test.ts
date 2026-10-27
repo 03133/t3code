@@ -49,6 +49,23 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.ok(result.providers.get("anthropic")!.models["claude-sonnet-4-5"]);
   });
 
+  it("preserves NVIDIA's nested model IDs in discovery and turn selection", () => {
+    const slug = "nvidia/nvidia/nemotron-3-super-120b-a12b";
+    const modelID = "nvidia/nemotron-3-super-120b-a12b";
+    const stdout = [
+      slug,
+      JSON.stringify({ id: modelID, providerID: "nvidia", name: "Nemotron 3 Super" }),
+    ].join("\n");
+
+    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
+    NodeAssert.deepEqual(result.connected, ["nvidia"]);
+    NodeAssert.equal(result.providers.get("nvidia")?.models[modelID]?.id, modelID);
+    NodeAssert.deepEqual(OpenCodeRuntime.parseOpenCodeModelSlug(slug), {
+      providerID: "nvidia",
+      modelID,
+    });
+  });
+
   it("keeps a model whose JSON body has a slash and no interior whitespace", () => {
     const stdout = [
       "openrouter/qwen/qwen3-coder",

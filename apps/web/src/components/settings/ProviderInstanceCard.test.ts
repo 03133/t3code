@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ServerProviderModel } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
 
 import {
   deriveProviderModelsForDisplay,
   nextProviderEnvironmentWithFieldValue,
+  providerEnvironmentFieldDescription,
 } from "./ProviderInstanceCard";
+import { providerClients } from "./providerDriverMeta";
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {
@@ -39,6 +41,50 @@ describe("deriveProviderModelsForDisplay", () => {
 });
 
 describe("provider environment helpers", () => {
+  it("adds, replaces, and clears the NVIDIA key without changing other providers", () => {
+    const nvidia = providerClients
+      .get(ProviderDriverKind.make("opencode"))
+      ?.environmentFields?.find((field) => field.name === "NVIDIA_API_KEY");
+    expect(nvidia).toBeDefined();
+    if (!nvidia) throw new Error("NVIDIA setup field is missing");
+    const otherProviders = [{ name: "OPENAI_API_KEY", value: "other-key", sensitive: true }];
+    const added = nextProviderEnvironmentWithFieldValue(otherProviders, nvidia, " nvapi-test ");
+    expect(added).toEqual([
+      ...otherProviders,
+      { name: "NVIDIA_API_KEY", value: "nvapi-test", sensitive: true },
+    ]);
+
+    const replaced = nextProviderEnvironmentWithFieldValue(
+      [
+        ...otherProviders,
+        { name: "NVIDIA_API_KEY", value: "", sensitive: true, valueRedacted: true },
+      ],
+      nvidia,
+      "new-nvidia-key",
+    );
+    expect(replaced).toEqual([
+      ...otherProviders,
+      { name: "NVIDIA_API_KEY", value: "new-nvidia-key", sensitive: true },
+    ]);
+    expect(nextProviderEnvironmentWithFieldValue(replaced, nvidia, "")).toEqual(otherProviders);
+
+    const existingPlaintext = [
+      ...otherProviders,
+      { name: "NVIDIA_API_KEY", value: "nvapi-test", sensitive: false },
+    ];
+    expect(nextProviderEnvironmentWithFieldValue(existingPlaintext, nvidia, "nvapi-test")).toEqual(
+      added,
+    );
+    expect(providerEnvironmentFieldDescription(nvidia, existingPlaintext[1])).toContain(
+      "Previously saved as non-sensitive",
+    );
+    expect(providerEnvironmentFieldDescription(nvidia, added[1])).toBe(nvidia.description);
+    expect(providerEnvironmentFieldDescription(nvidia, undefined)).toBe(nvidia.description);
+    expect(
+      providerEnvironmentFieldDescription({ ...nvidia, sensitive: false }, existingPlaintext[1]),
+    ).toBe(nvidia.description);
+  });
+
   const cursorApiKeyField = {
     name: "CURSOR_API_KEY",
     label: "Cursor API key",

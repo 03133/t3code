@@ -247,6 +247,21 @@ export function nextProviderEnvironmentWithFieldValue(
   return next;
 }
 
+export function providerEnvironmentFieldDescription(
+  field: ProviderEnvironmentField,
+  variable: ProviderInstanceEnvironmentVariable | undefined,
+): string | undefined {
+  if (field.sensitive !== false && variable?.sensitive === false) {
+    return [
+      field.description,
+      "Previously saved as non-sensitive. Clear and re-enter it to store it as sensitive.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  return field.description;
+}
+
 function ProviderEnvironmentFieldRow(props: {
   readonly field: ProviderEnvironmentField;
   readonly variable: ProviderInstanceEnvironmentVariable | undefined;
@@ -260,7 +275,7 @@ function ProviderEnvironmentFieldRow(props: {
   return (
     <SettingsRow
       title={<label htmlFor={inputId}>{props.field.label}</label>}
-      description={props.field.description}
+      description={providerEnvironmentFieldDescription(props.field, props.variable)}
       control={
         <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
           {props.field.sensitive === false ? (
