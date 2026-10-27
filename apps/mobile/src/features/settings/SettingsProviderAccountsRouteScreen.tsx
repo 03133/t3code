@@ -10,7 +10,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -28,6 +28,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { NvidiaOpenCodeSettings } from "./NvidiaOpenCodeSettings";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
@@ -62,23 +63,29 @@ export function SettingsProviderAccountsRouteScreen() {
                     {(providersByEnvironment.get(environment.environmentId) ?? [])
                       .filter(
                         (provider) =>
+                          provider.driver === "opencode" ||
                           provider.setup?.canAuthenticate ||
                           (provider.driver === "acpRegistry" && provider.installed),
                       )
                       .map((provider) => (
-                        <ProviderAccount
-                          key={provider.instanceId}
-                          environment={environment}
-                          provider={provider}
-                        />
+                        <Fragment key={provider.instanceId}>
+                          {provider.driver === "opencode" ? (
+                            <NvidiaOpenCodeSettings environment={environment} provider={provider} />
+                          ) : null}
+                          {provider.setup?.canAuthenticate ||
+                          (provider.driver === "acpRegistry" && provider.installed) ? (
+                            <ProviderAccount environment={environment} provider={provider} />
+                          ) : null}
+                        </Fragment>
                       ))}
                     {!(providersByEnvironment.get(environment.environmentId) ?? []).some(
                       (provider) =>
+                        provider.driver === "opencode" ||
                         provider.setup?.canAuthenticate ||
                         (provider.driver === "acpRegistry" && provider.installed),
                     ) ? (
                       <Text className="p-4 text-foreground-muted">
-                        Configure a provider with in-app sign-in in web or desktop Settings.
+                        Enable OpenCode or configure a provider with in-app sign-in on the server.
                       </Text>
                     ) : null}
                   </>

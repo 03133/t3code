@@ -3,7 +3,7 @@ import type { ExpoConfig } from "expo/config";
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
-type AppVariant = "development" | "preview" | "production";
+type AppVariant = "development" | "preview" | "production" | "nvidia";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -94,6 +94,14 @@ const VARIANT_CONFIG = {
     relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
   },
+  nvidia: {
+    appName: "T3 Code NVIDIA",
+    scheme: "t3code-nvidia",
+    iosBundleIdentifier: "dev.t3nvidia.code",
+    androidPackage: "dev.t3nvidia.code",
+    relyingParty: "clerk.t3.codes",
+    assets: PREVIEW_ASSETS,
+  },
 } as const;
 
 function resolveAppVariant(value: string | undefined): AppVariant {
@@ -101,6 +109,7 @@ function resolveAppVariant(value: string | undefined): AppVariant {
     case "development":
     case "preview":
     case "production":
+    case "nvidia":
       return value;
     default:
       return "production";
@@ -229,7 +238,8 @@ const config: ExpoConfig = {
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
   updates: {
-    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
+    // Unofficial builds must never replace their bundled JS with upstream's OTA update.
+    enabled: APP_VARIANT !== "nvidia" && repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
     url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,

@@ -1,25 +1,173 @@
-name: NVIDIA Android test build
+name: Build T3 Code NVIDIA Android
 
 on:
+  workflow_dispatch:
   push:
     branches: [nvidia-android]
-    paths: [.github/workflows/nvidia-android.yml]
 
 permissions:
   contents: read
 
+concurrency:
+  group: t3code-nvidia-android
+  cancel-in-progress: true
+
 jobs:
-  check-runner:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    env:
+      APP_VARIANT: nvidia
+      T3CODE_MOBILE_UPDATES_ENABLED: "0"
+      MOBILE_VERSION_POLICY: appVersion
+      EXPO_NO_GIT_STATUS: "1"
+      VP_GIT_HOOKS: "0"
+      NODE_OPTIONS: --max-old-space-size=4096
+      CI: "1"
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Check Android build environment
+      # The upstream tree contains gitlinks in .repos with no root .gitmodules entry.
+      # Fetch a public, immutable archive instead of checkout's recursive submodule cleanup.
+      - name: Fetch this commit
+        shell: bash
         run: |
-          echo "Verifying Android build runner"
-          java -version
-          df -h .
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}" \
+            | tar -xz --strip-components=1 --exclude='*/.repos' --exclude='*/.repos/*'
+          test -f apps/mobile/app.config.ts
+          echo "Building commit ${GITHUB_SHA}"
           free -h
-          echo "Android SDK: ${ANDROID_HOME:-not set}"
+          df -h .
+
+      - name: Set up Vite+, Node and pnpm
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          version: 1.4.0
+          node-version: 26.12.1
+          cache: false
+          run-install: |
+            args:
+              - --frozen-lockfile
+              - --filter=@t3tools/mobile...
+              - --filter=@t3tools/scripts...
+              - --filter=@t3tools/monorepo
+
+      - name: Make pnpm available to Gradle
+        run: |
+          pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/12.14.0/pnpm/bin"
+          test -x "$pnpm_bin/pnpm"
+          echo "$pnpm_bin" >> "$GITHUB_PATH"
+          "$pnpm_bin/pnpm" --version
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
+
+      - name: Configure public Connect identifiers
+        # This file contains only the public production identifiers from upstream.
+        run: cp .env.example .env
+
+      - name: Run focused mobile tests
+        working-directory: apps/mobile
+        run: vp test run --project unit src/features/settings/nvidiaSetup.test.ts src/features/connection/pairing.test.ts src/lib/appLinking.test.ts
+
+      - name: Type-check mobile
+        working-directory: apps/mobile
+        run: pnpm exec tsc --noEmit
+
+      - name: Generate Android project
+        run: pnpm --filter @t3tools/mobile exec expo prebuild --clean --platform android --no-install
+
+      - name: Configure private release signing
+        env:
+          KEYSTORE_B64: ${{ secrets.T3CODE_NVIDIA_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.T3CODE_NVIDIA_KEYSTORE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64" && test -n "$KEYSTORE_PASSWORD"
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/t3code-nvidia.p12"
+          keytool -list -keystore "$RUNNER_TEMP/t3code-nvidia.p12" -storetype PKCS12 \
+            -storepass:env KEYSTORE_PASSWORD -alias t3code-nvidia >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/mobile/android/app/build.gradle')
+          s = p.read_text()
+          marker = '    signingConfigs {\n'
+          assert s.count(marker) == 1
+          signing = '''        nvidiaRelease {
+                  storeFile file(System.getenv('RUNNER_TEMP') + '/t3code-nvidia.p12')
+                  storeType 'PKCS12'
+                  storePassword System.getenv('KEYSTORE_PASSWORD')
+                  keyAlias 't3code-nvidia'
+                  keyPassword System.getenv('KEYSTORE_PASSWORD')
+              }
+          '''
+          s = s.replace(marker, marker + signing, 1)
+          start = s.index('        release {', s.index('    buildTypes {'))
+          end = s.index('\n        }', start)
+          block = s[start:end]
+          assert block.count('signingConfig signingConfigs.debug') == 1
+          block = block.replace('signingConfig signingConfigs.debug', 'signingConfig signingConfigs.nvidiaRelease')
+          p.write_text(s[:start] + block + s[end:])
+          PY
+
+      # Separating Metro from native compilation keeps peak RAM down.
+      - name: Bundle release JavaScript
+        working-directory: apps/mobile/android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.T3CODE_NVIDIA_KEYSTORE_PASSWORD }}
+        run: ./gradlew :app:createBundleReleaseJsAndAssets -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon
+
+      - name: Compile and sign release APK
+        working-directory: apps/mobile/android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.T3CODE_NVIDIA_KEYSTORE_PASSWORD }}
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon -x lint -x test
+
+      - name: Verify APK and create checksums
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.T3CODE_NVIDIA_KEYSTORE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          test -s "$apk"
+          apksigner="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+          aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
+          "$apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
+          expected="$(keytool -exportcert -keystore "$RUNNER_TEMP/t3code-nvidia.p12" \
+            -storetype PKCS12 -storepass:env KEYSTORE_PASSWORD -alias t3code-nvidia | sha256sum | cut -d' ' -f1)"
+          actual="$(sed -nE 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/signature.txt" | tr '[:upper:]' '[:lower:]')"
+          test -n "$expected" && test "$expected" = "$actual"
+          "$aapt" dump badging "$apk" > "$RUNNER_TEMP/badging.txt"
+          grep -F "package: name='dev.t3nvidia.code'" "$RUNNER_TEMP/badging.txt"
+          grep -F "application-label:'T3 Code NVIDIA'" "$RUNNER_TEMP/badging.txt"
+          unzip -Z1 "$apk" > "$RUNNER_TEMP/apk-entries.txt"
+          grep -F 'assets/index.android.bundle' "$RUNNER_TEMP/apk-entries.txt"
+          grep -F 'lib/arm64-v8a/' "$RUNNER_TEMP/apk-entries.txt" | head -1 || true
+          abis="$(awk -F/ '$1=="lib" && NF>2 {print $2}' "$RUNNER_TEMP/apk-entries.txt" | sort -u | paste -sd, -)"
+          test "$abis" = arm64-v8a
+          mkdir -p release-artifact
+          cp "$apk" release-artifact/T3-Code-NVIDIA-arm64.apk
+          (cd release-artifact && sha256sum T3-Code-NVIDIA-arm64.apk > SHA256SUMS.txt)
+          printf 'Source commit: %s\nPackage: dev.t3nvidia.code\nArchitecture: %s\nSigning certificate SHA-256: %s\n' \
+            "$GITHUB_SHA" "$abis" "$actual" > release-artifact/BUILD-INFO.txt
+          cat release-artifact/SHA256SUMS.txt release-artifact/BUILD-INFO.txt
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: T3-Code-NVIDIA-android-arm64
+          path: release-artifact/
+          retention-days: 7
+          if-no-files-found: error
