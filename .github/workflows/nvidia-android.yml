@@ -9,7 +9,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: t3code-nvidia-android
+  # Allow a new commit to build while an older one finishes; reruns of the same SHA cancel.
+  group: t3code-nvidia-android-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -78,6 +79,16 @@ jobs:
       - name: Run focused mobile tests
         working-directory: apps/mobile
         run: vp test run --project unit src/features/settings/nvidiaSetup.test.ts src/features/connection/pairing.test.ts src/lib/appLinking.test.ts
+
+      - name: Test NVIDIA settings screen and React compiler
+        working-directory: apps/mobile
+        run: |
+          vp test run --project react src/features/settings/NvidiaOpenCodeSettings.test.tsx
+          if ! vp test run --project unit src/reactCompilerCoverage.test.ts -t 'compiles src/features/settings/NvidiaOpenCodeSettings.tsx' > "$RUNNER_TEMP/react-compiler-test.log" 2>&1; then
+            tail -n 100 "$RUNNER_TEMP/react-compiler-test.log"
+            exit 1
+          fi
+          tail -n 8 "$RUNNER_TEMP/react-compiler-test.log"
 
       - name: Type-check mobile
         working-directory: apps/mobile

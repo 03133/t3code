@@ -52,60 +52,51 @@ export function NvidiaOpenCodeSettings({
     setPending(true);
     setNotice(null);
     setError(null);
-    let changeAcknowledged = false;
-    let replacementUnverified = false;
-    try {
-      const next = updateNvidiaKey(instance, key, key !== null);
-      const result = await mutate({
-        environmentId: environment.environmentId,
-        input: {
-          patch: {},
-          providerInstanceMutation: { operation: "upsert", instanceId, instance: next },
-        },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          setError("Could not save the NVIDIA key. Check the connection and provider permissions.");
-        }
-        return;
+    const finish = () => {
+      pendingRef.current = false;
+      setPending(false);
+    };
+    const next = updateNvidiaKey(instance, key, key !== null);
+    const result = await mutate({
+      environmentId: environment.environmentId,
+      input: {
+        patch: {},
+        providerInstanceMutation: { operation: "upsert", instanceId, instance: next },
+      },
+    }).catch(() => null);
+    if (result === null || result._tag === "Failure") {
+      if (result === null || !isAtomCommandInterrupted(result)) {
+        setError("Could not save the NVIDIA key. Check the connection and provider permissions.");
       }
-      const savedKey = result.value.providerInstances[instanceId]?.environment?.find(
-        (variable) => variable.name === NVIDIA_API_KEY_NAME,
-      );
-      const verification = verifyNvidiaKeyUpdate(currentKey, savedKey, key === null);
-      if (verification === "not-saved") {
-        setError("The server did not save this change. Update the T3 Code server and try again.");
-        return;
-      }
-      changeAcknowledged = true;
-      replacementUnverified = verification === "unverified";
-      setDraft("");
-      const refreshed = await refresh({
-        environmentId: environment.environmentId,
-        input: { instanceId, refreshModels: true, fresh: true },
-      });
-      const changeNotice = replacementUnverified
+      finish();
+      return;
+    }
+    const savedKey = result.value.providerInstances[instanceId]?.environment?.find(
+      (variable) => variable.name === NVIDIA_API_KEY_NAME,
+    );
+    const verification = verifyNvidiaKeyUpdate(currentKey, savedKey, key === null);
+    if (verification === "not-saved") {
+      setError("The server did not save this change. Update the T3 Code server and try again.");
+      finish();
+      return;
+    }
+    setDraft("");
+    const refreshed = await refresh({
+      environmentId: environment.environmentId,
+      input: { instanceId, refreshModels: true, fresh: true },
+    }).catch(() => null);
+    const changeNotice =
+      verification === "unverified"
         ? "The server acknowledged the request, but the redacted response cannot confirm the replacement. Test the new key in a thread."
         : key === null
           ? "NVIDIA key removed."
           : "NVIDIA key saved. Choose an NVIDIA model in your thread.";
-      setNotice(
-        refreshed._tag === "Success"
-          ? `${changeNotice} Provider refreshed.`
-          : `${changeNotice} Model refresh failed; refresh from the thread settings.`,
-      );
-    } catch {
-      setError(
-        changeAcknowledged
-          ? replacementUnverified
-            ? "The server acknowledged the request, but the replacement could not be verified and model refresh failed."
-            : "The key change was saved, but model refresh failed."
-          : "Could not save the NVIDIA key. Check the connection and provider permissions.",
-      );
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
-    }
+    setNotice(
+      refreshed?._tag === "Success"
+        ? `${changeNotice} Provider refreshed.`
+        : `${changeNotice} Model refresh failed; refresh from the thread settings.`,
+    );
+    finish();
   }
 
   return (

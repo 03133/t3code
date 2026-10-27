@@ -8,11 +8,12 @@
 > [!NOTE]
 > Uses native modules so using Expo Go is not supported. You need to use the Expo Dev Client.
 
-This app has three variants:
+This fork has four variants:
 
 - `development`: Expo dev client, installable side-by-side as `T3 Code Dev`
 - `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
 - `production`: store/release build as `T3 Code`
+- `nvidia`: unofficial Android build (`dev.t3nvidia.code`) with an NVIDIA Build key field for OpenCode; upstream OTA updates are disabled
 
 Run commands from `apps/mobile`.
 
