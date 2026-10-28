@@ -75,14 +75,68 @@ describe("provider environment helpers", () => {
     expect(nextProviderEnvironmentWithFieldValue(existingPlaintext, nvidia, "nvapi-test")).toEqual(
       added,
     );
-    expect(providerEnvironmentFieldDescription(nvidia, existingPlaintext[1])).toContain(
+    expect(providerEnvironmentFieldDescription(nvidia, existingPlaintext.slice(1))).toContain(
       "Previously saved as non-sensitive",
     );
-    expect(providerEnvironmentFieldDescription(nvidia, added[1])).toBe(nvidia.description);
-    expect(providerEnvironmentFieldDescription(nvidia, undefined)).toBe(nvidia.description);
+    expect(providerEnvironmentFieldDescription(nvidia, added.slice(1))).toBe(nvidia.description);
+    expect(providerEnvironmentFieldDescription(nvidia, [])).toBe(nvidia.description);
     expect(
-      providerEnvironmentFieldDescription({ ...nvidia, sensitive: false }, existingPlaintext[1]),
+      providerEnvironmentFieldDescription(
+        { ...nvidia, sensitive: false },
+        existingPlaintext.slice(1),
+      ),
     ).toBe(nvidia.description);
+  });
+
+  it("warns about every non-sensitive NVIDIA key when entries have the same name", () => {
+    const nvidia = {
+      name: "NVIDIA_API_KEY",
+      label: "NVIDIA Build API key",
+      description: "Optional NVIDIA key.",
+      sensitive: true,
+    };
+    const secret = { name: nvidia.name, value: "", sensitive: true, valueRedacted: true };
+    const plaintext = { name: nvidia.name, value: "legacy-test-key", sensitive: false };
+
+    for (const entries of [
+      [secret, plaintext],
+      [plaintext, secret],
+    ]) {
+      const description = providerEnvironmentFieldDescription(nvidia, entries);
+      expect(description).toContain("Multiple entries");
+      expect(description).toContain("non-sensitive");
+      expect(description).toContain("Clear and re-enter");
+    }
+
+    expect(providerEnvironmentFieldDescription(nvidia, [secret, secret])).toContain(
+      "Multiple entries",
+    );
+    expect(providerEnvironmentFieldDescription(nvidia, [secret, secret])).not.toContain(
+      "non-sensitive",
+    );
+    expect(
+      providerEnvironmentFieldDescription({ ...nvidia, sensitive: false }, [plaintext, plaintext]),
+    ).not.toContain("non-sensitive");
+  });
+
+  it("replaces or clears all duplicate NVIDIA entries while preserving unrelated variables", () => {
+    const nvidia = { name: "NVIDIA_API_KEY", label: "NVIDIA Build API key", sensitive: true };
+    const other = { name: "OPENAI_API_KEY", value: "", sensitive: true, valueRedacted: true };
+    const flag = { name: "EXTRA_FLAG", value: "1", sensitive: false };
+    const secret = { name: nvidia.name, value: "", sensitive: true, valueRedacted: true };
+    const plaintext = { name: nvidia.name, value: "legacy-test-key", sensitive: false };
+
+    for (const entries of [
+      [secret, other, plaintext, flag],
+      [plaintext, other, secret, flag],
+    ]) {
+      expect(nextProviderEnvironmentWithFieldValue(entries, nvidia, "new-test-key")).toEqual([
+        { name: nvidia.name, value: "new-test-key", sensitive: true },
+        other,
+        flag,
+      ]);
+      expect(nextProviderEnvironmentWithFieldValue(entries, nvidia, "")).toEqual([other, flag]);
+    }
   });
 
   const cursorApiKeyField = {
