@@ -179,7 +179,10 @@ jobs:
           "$apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/signature.txt"
           expected="$(keytool -exportcert -keystore "$RUNNER_TEMP/t3code-nvidia.p12" \
             -storetype PKCS12 -storepass:env KEYSTORE_PASSWORD -alias t3code-nvidia | sha256sum | cut -d' ' -f1)"
-          actual="$(sed -nE 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/signature.txt" | tr '[:upper:]' '[:lower:]')"
+          # Build Tools 37 prints "V3.0 Signer:" rather than "Signer #1".
+          # Require one signer and the same certificate digest across signature schemes.
+          grep -Fx 'Number of signers: 1' "$RUNNER_TEMP/signature.txt"
+          actual="$(sed -nE 's/^.*certificate SHA-256 digest:[[:space:]]*([[:xdigit:]]+).*$/\1/p' "$RUNNER_TEMP/signature.txt" | tr '[:upper:]' '[:lower:]' | sort -u)"
           printf 'Expected signing certificate: %s\nActual signing certificate: %s\n' "$expected" "$actual"
           test -n "$expected" && test "$expected" = "$actual"
           "$aapt" dump badging "$apk" > "$RUNNER_TEMP/badging.txt"
