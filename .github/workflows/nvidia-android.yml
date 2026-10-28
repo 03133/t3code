@@ -143,7 +143,17 @@ jobs:
         working-directory: apps/mobile/android
         env:
           KEYSTORE_PASSWORD: ${{ secrets.T3CODE_NVIDIA_KEYSTORE_PASSWORD }}
-        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon -x lint -x test
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --max-workers=3 --no-daemon -x lint -x test -x lintVitalRelease -x :app:compileReleaseArtProfile
+
+      # Keep the compiled file even if a later verification check fails, so its
+      # signature and manifest can be inspected independently instead of rebuilding.
+      - name: Upload compiled APK for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: T3-Code-NVIDIA-compiled-APK
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Verify APK and create checksums
         env:
@@ -155,10 +165,11 @@ jobs:
           test -s "$apk"
           apksigner="$ANDROID_HOME/build-tools/37.0.0/apksigner"
           aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
-          "$apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
+          "$apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/signature.txt"
           expected="$(keytool -exportcert -keystore "$RUNNER_TEMP/t3code-nvidia.p12" \
             -storetype PKCS12 -storepass:env KEYSTORE_PASSWORD -alias t3code-nvidia | sha256sum | cut -d' ' -f1)"
           actual="$(sed -nE 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/signature.txt" | tr '[:upper:]' '[:lower:]')"
+          printf 'Expected signing certificate: %s\nActual signing certificate: %s\n' "$expected" "$actual"
           test -n "$expected" && test "$expected" = "$actual"
           "$aapt" dump badging "$apk" > "$RUNNER_TEMP/badging.txt"
           grep -F "package: name='dev.t3nvidia.code'" "$RUNNER_TEMP/badging.txt"
