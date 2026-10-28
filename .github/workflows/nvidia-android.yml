@@ -145,13 +145,24 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.T3CODE_NVIDIA_KEYSTORE_PASSWORD }}
         run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --max-workers=3 --no-daemon -x lint -x test -x lintVitalRelease -x :app:compileReleaseArtProfile
 
-      # Keep the compiled file even if a later verification check fails, so its
-      # signature and manifest can be inspected independently instead of rebuilding.
+      - name: Locate compiled APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          find apps/mobile/android/app/build/outputs -type f -name '*.apk' -print
+          mapfile -t apks < <(find apps/mobile/android/app/build/outputs -type f -name '*.apk' ! -name '*unaligned*' | sort)
+          test "${#apks[@]}" -eq 1
+          test -s "${apks[0]}"
+          echo "path=${apks[0]}" >> "$GITHUB_OUTPUT"
+
+      # Retain the compiled file even if later checks fail, so its signature and
+      # manifest can be inspected independently instead of rebuilding.
       - name: Upload compiled APK for inspection
         uses: actions/upload-artifact@v4
         with:
           name: T3-Code-NVIDIA-compiled-APK
-          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          path: ${{ steps.apk.outputs.path }}
           retention-days: 7
           if-no-files-found: error
 
@@ -161,7 +172,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apk=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          apk="${{ steps.apk.outputs.path }}"
           test -s "$apk"
           apksigner="$ANDROID_HOME/build-tools/37.0.0/apksigner"
           aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
